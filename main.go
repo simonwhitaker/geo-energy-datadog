@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DataDog/datadog-api-client-go/v2/api/datadog"
@@ -15,7 +16,6 @@ import (
 )
 
 func getMetricSeries(name string, value float64) datadogV2.MetricSeries {
-	fmt.Printf("%v: %.3f\n", name, value)
 	return datadogV2.MetricSeries{
 		Metric: name,
 		Type:   datadogV2.METRICINTAKETYPE_GAUGE.Ptr(),
@@ -34,66 +34,100 @@ func getMetricSeries(name string, value float64) datadogV2.MetricSeries {
 	}
 }
 
-func main() {
-	ctx := datadog.NewDefaultContext(context.Background())
-	configuration := datadog.NewConfiguration()
-	datadogApiClient := datadog.NewAPIClient(configuration)
-	datadogMetricsApi := datadogV2.NewMetricsApi(datadogApiClient)
-
-	username := os.Getenv("GEO_USERNAME")
-	password := os.Getenv("GEO_PASSWORD")
-
-	accessToken, err := geo.GetAccessToken(username, password)
+func getMeterData(ctx context.Context, logger *log.Logger, geoUsername, geoPassword string, datadogMetricsApi *datadogV2.MetricsApi, isPeriodicData bool) {
+	accessToken, err := geo.GetAccessToken(geoUsername, geoPassword)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 
 	// Get device data to get the system ID
 	deviceData, err := geo.GetDeviceData(accessToken)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 	// Set system ID
 	geoSystemID := deviceData.SystemDetails[0].SystemID
 
 	allSeries := []datadogV2.MetricSeries{}
 
-	// Get live meter data
-	liveData, err := geo.GetLiveMeterData(accessToken, geoSystemID)
-	if err != nil {
-		log.Fatal(err)
-	}
+	if isPeriodicData {
+		// Get periodic meter data
+		periodicData, err := geo.GetPeriodicMeterData(accessToken, geoSystemID)
+		if err != nil {
+			logger.Fatal(err)
+		}
 
-	for _, v := range liveData.Power {
-		if v.ValueAvailable {
-			name := "energy.live." + strings.ToLower(v.Type)
-			allSeries = append(allSeries, getMetricSeries(name, v.Watts))
+		for _, v := range periodicData.TotalConsumptionList {
+			if v.ValueAvailable {
+				name := "energy.periodic." + strings.ToLower(v.CommodityType)
+				allSeries = append(allSeries, getMetricSeries(name, v.TotalConsumption))
+			}
+		}
+
+	} else {
+		// Get live meter data
+		liveData, err := geo.GetLiveMeterData(accessToken, geoSystemID)
+		if err != nil {
+			logger.Fatal(err)
+		}
+
+		for _, v := range liveData.Power {
+			if v.ValueAvailable {
+				name := "energy.live." + strings.ToLower(v.Type)
+				allSeries = append(allSeries, getMetricSeries(name, v.Watts))
+			}
 		}
 	}
 
-	// Get periodic meter data
-	periodicData, err := geo.GetPeriodicMeterData(accessToken, geoSystemID)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, v := range periodicData.TotalConsumptionList {
-		if v.ValueAvailable {
-			name := "energy.periodic." + strings.ToLower(v.CommodityType)
-			allSeries = append(allSeries, getMetricSeries(name, v.TotalConsumption))
-		}
-	}
+	allSeriesBytes, _ := json.Marshal(allSeries)
+	logger.Println(string(allSeriesBytes))
 
 	body := datadogV2.MetricPayload{Series: allSeries}
 
-	resp, r, err := datadogMetricsApi.SubmitMetrics(ctx, body, *datadogV2.NewSubmitMetricsOptionalParameters())
+	_, r, err := datadogMetricsApi.SubmitMetrics(ctx, body, *datadogV2.NewSubmitMetricsOptionalParameters())
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error when calling `MetricsApi.SubmitMetrics`: %v\n", err)
-		fmt.Fprintf(os.Stderr, "Full HTTP response: %v\n", r)
+		logger.Printf("Error when calling `MetricsApi.SubmitMetrics`: %v\n", err)
+		logger.Printf("Full HTTP response: %v\n", r)
 	}
+}
 
-	responseContent, _ := json.MarshalIndent(resp, "", "  ")
-	fmt.Fprintf(os.Stdout, "Response from `MetricsApi.SubmitMetrics`:\n%s\n", responseContent)
+func scheduler(ctx context.Context, logger *log.Logger, tickLive, tickPeriodic *time.Ticker, done chan bool, geoUsername, geoPassword string, datadogMetricsApi *datadogV2.MetricsApi) {
+	getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, false)
+	for {
+		select {
+		case <-tickLive.C:
+			getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, false)
+		case <-tickPeriodic.C:
+			getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, true)
+		case <-done:
+			return
+		}
+	}
+}
 
+func main() {
+	ctx := datadog.NewDefaultContext(context.Background())
+	logger := log.New(os.Stdout, "", log.LstdFlags)
+	configuration := datadog.NewConfiguration()
+	datadogApiClient := datadog.NewAPIClient(configuration)
+	datadogMetricsApi := datadogV2.NewMetricsApi(datadogApiClient)
+
+	liveInterval := 10
+	periodicInterval := 300
+
+	tickLive := time.NewTicker(time.Second * time.Duration(liveInterval))
+	tickPeriodic := time.NewTicker(time.Second * time.Duration(periodicInterval))
+
+	geoUsername := os.Getenv("GEO_USERNAME")
+	geoPassword := os.Getenv("GEO_PASSWORD")
+
+	done := make(chan bool)
+	go scheduler(ctx, logger, tickLive, tickPeriodic, done, geoUsername, geoPassword, datadogMetricsApi)
+
+	// Wait for a SIGINT or SIGTERM
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	<-sigs
+	done <- true
 }
