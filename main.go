@@ -92,7 +92,7 @@ func getMeterData(ctx context.Context, logger *log.Logger, geoUsername, geoPassw
 	}
 }
 
-func scheduler(ctx context.Context, logger *log.Logger, tickLive, tickPeriodic *time.Ticker, done chan bool, geoUsername, geoPassword string, datadogMetricsApi *datadogV2.MetricsApi) {
+func scheduler(ctx context.Context, logger *log.Logger, tickLive, tickPeriodic *time.Ticker, geoUsername, geoPassword string, datadogMetricsApi *datadogV2.MetricsApi) {
 	getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, false)
 	for {
 		select {
@@ -100,8 +100,6 @@ func scheduler(ctx context.Context, logger *log.Logger, tickLive, tickPeriodic *
 			getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, false)
 		case <-tickPeriodic.C:
 			getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, true)
-		case <-done:
-			return
 		}
 	}
 }
@@ -122,12 +120,10 @@ func main() {
 	geoUsername := os.Getenv("GEO_USERNAME")
 	geoPassword := os.Getenv("GEO_PASSWORD")
 
-	done := make(chan bool)
-	go scheduler(ctx, logger, tickLive, tickPeriodic, done, geoUsername, geoPassword, datadogMetricsApi)
+	go scheduler(ctx, logger, tickLive, tickPeriodic, geoUsername, geoPassword, datadogMetricsApi)
 
 	// Wait for a SIGINT or SIGTERM
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
-	done <- true
 }
