@@ -8,3 +8,8 @@ services:
       - GEO_USERNAME
       - GEO_PASSWORD
       - DD_API_KEY
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 500M
