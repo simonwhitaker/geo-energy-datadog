@@ -1,0 +1,10 @@
+version: "3.8"
+services:
+  app:
+    build:
+      context: .
+    environment:
+      - DD_SITE=datadoghq.eu
+      - GEO_USERNAME
+      - GEO_PASSWORD
+      - DD_API_KEY
