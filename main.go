@@ -15,6 +15,13 @@ import (
 	"github.com/olivercullimore/geo-energy-data-client"
 )
 
+type ReadingMode int
+
+const (
+	LIVE ReadingMode = 1 << iota
+	PERIODIC
+)
+
 func getMetricSeries(name string, value float64) datadogV2.MetricSeries {
 	return datadogV2.MetricSeries{
 		Metric: name,
@@ -34,7 +41,7 @@ func getMetricSeries(name string, value float64) datadogV2.MetricSeries {
 	}
 }
 
-func getMeterData(ctx context.Context, logger *log.Logger, geoUsername, geoPassword string, datadogMetricsApi *datadogV2.MetricsApi, isPeriodicData bool) {
+func getMeterData(ctx context.Context, logger *log.Logger, geoUsername, geoPassword string, datadogMetricsApi *datadogV2.MetricsApi, mode ReadingMode) {
 	accessToken, err := geo.GetAccessToken(geoUsername, geoPassword)
 	if err != nil {
 		logger.Fatal(err)
@@ -50,7 +57,7 @@ func getMeterData(ctx context.Context, logger *log.Logger, geoUsername, geoPassw
 
 	allSeries := []datadogV2.MetricSeries{}
 
-	if isPeriodicData {
+	if mode&PERIODIC != 0 {
 		// Get periodic meter data
 		periodicData, err := geo.GetPeriodicMeterData(accessToken, geoSystemID)
 		if err != nil {
@@ -64,7 +71,8 @@ func getMeterData(ctx context.Context, logger *log.Logger, geoUsername, geoPassw
 			}
 		}
 
-	} else {
+	}
+	if mode&LIVE != 0 {
 		// Get live meter data
 		liveData, err := geo.GetLiveMeterData(accessToken, geoSystemID)
 		if err != nil {
@@ -93,13 +101,13 @@ func getMeterData(ctx context.Context, logger *log.Logger, geoUsername, geoPassw
 }
 
 func scheduler(ctx context.Context, logger *log.Logger, tickLive, tickPeriodic *time.Ticker, geoUsername, geoPassword string, datadogMetricsApi *datadogV2.MetricsApi) {
-	getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, false)
+	getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, LIVE|PERIODIC)
 	for {
 		select {
 		case <-tickLive.C:
-			getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, false)
+			getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, LIVE)
 		case <-tickPeriodic.C:
-			getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, true)
+			getMeterData(ctx, logger, geoUsername, geoPassword, datadogMetricsApi, PERIODIC)
 		}
 	}
 }
