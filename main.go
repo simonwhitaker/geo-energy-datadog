@@ -69,7 +69,8 @@ func main() {
 	// Configure writers
 	datadogApiKey := os.Getenv("DD_API_KEY")
 	datadogSite := os.Getenv("DD_SITE")
-	datadogHostname := "localhost"
+	datadogHostname := getEnvOrDefault("DD_HOSTNAME", "localhost")
+
 	writers := []energy.EnergyDataWriter{
 		energy.NewLoggerWriter(logger),
 		energy.NewDatadogWriter(datadogApiKey, datadogSite, datadogHostname, logger),
