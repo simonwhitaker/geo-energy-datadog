@@ -68,7 +68,7 @@ func main() {
 
 	// Configure writers
 	datadogApiKey := os.Getenv("DD_API_KEY")
-	datadogSite := os.Getenv("DD_SITE")
+	datadogSite := getEnvOrDefault("DD_SITE", "datadoghq.com")
 	datadogHostname := getEnvOrDefault("DD_HOSTNAME", "localhost")
 
 	writers := []energy.EnergyDataWriter{
@@ -76,11 +76,8 @@ func main() {
 		energy.NewDatadogWriter(datadogApiKey, datadogSite, datadogHostname, logger),
 	}
 
-	liveInterval := 10
-	periodicInterval := 300
-
-	tickLive := time.NewTicker(time.Second * time.Duration(liveInterval))
-	tickPeriodic := time.NewTicker(time.Second * time.Duration(periodicInterval))
+	tickLive := time.NewTicker(time.Second * time.Duration(10))
+	tickPeriodic := time.NewTicker(time.Second * time.Duration(300))
 
 	go scheduler(logger, reader, writers, tickLive, tickPeriodic)
 
