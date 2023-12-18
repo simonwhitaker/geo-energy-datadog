@@ -100,13 +100,13 @@ func (r *GeoEnergyDataReader) GetMeterReadings() ([]Reading, error) {
 			case "GAS_ENERGY":
 				result = append(result, Reading{
 					Commodity:   GAS,
-					ReadingType: LIVE,
+					ReadingType: METER,
 					Value:       v.TotalConsumption,
 				})
 			case "ELECTRICITY":
 				result = append(result, Reading{
 					Commodity:   ELECTRICITY,
-					ReadingType: LIVE,
+					ReadingType: METER,
 					Value:       v.TotalConsumption,
 				})
 			}
