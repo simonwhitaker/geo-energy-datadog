@@ -59,14 +59,21 @@ func scheduler(logger *log.Logger, reader energy.EnergyDataReader, writers []ene
 }
 
 func main() {
+	logger := log.New(os.Stdout, "", log.LstdFlags)
 
+	// Configure reader
 	geoUsername := os.Getenv("GEO_USERNAME")
 	geoPassword := os.Getenv("GEO_PASSWORD")
 	reader := energy.NewGeoEnergyDataReader(geoUsername, geoPassword)
+
+	// Configure writers
+	datadogApiKey := os.Getenv("DD_API_KEY")
+	datadogSite := os.Getenv("DD_SITE")
+	datadogHostname := "localhost"
 	writers := []energy.EnergyDataWriter{
-		energy.NewWriterStdout(),
+		energy.NewLoggerWriter(logger),
+		energy.NewDatadogWriter(datadogApiKey, datadogSite, datadogHostname, logger),
 	}
-	logger := log.New(os.Stdout, "", log.LstdFlags)
 
 	liveInterval := 10
 	periodicInterval := 300
