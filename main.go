@@ -59,11 +59,12 @@ func main() {
 		energy.NewLoggerWriter(logger),
 	}
 
-	if true {
-		datadogApiKey := os.Getenv("DD_API_KEY")
+	if datadogApiKey, ok := os.LookupEnv("DD_API_KEY"); ok {
 		datadogSite := getEnvOrDefault("DD_SITE", "datadoghq.com")
 		datadogHostname := getEnvOrDefault("DD_HOSTNAME", "localhost")
 		writers = append(writers, energy.NewDatadogWriter(datadogApiKey, datadogSite, datadogHostname, logger))
+	} else {
+		logger.Println("Skipping Datadog; DD_API_KEY not set")
 	}
 
 	tickLive := time.NewTicker(time.Second * time.Duration(10))
