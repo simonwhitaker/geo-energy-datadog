@@ -46,18 +46,6 @@ func getMeterData(logger *log.Logger, reader energy.EnergyDataReader, writers []
 	}
 }
 
-func scheduler(logger *log.Logger, reader energy.EnergyDataReader, writers []energy.EnergyDataWriter, tickLive, tickPeriodic *time.Ticker) {
-	getMeterData(logger, reader, writers, LIVE|PERIODIC)
-	for {
-		select {
-		case <-tickLive.C:
-			getMeterData(logger, reader, writers, LIVE)
-		case <-tickPeriodic.C:
-			getMeterData(logger, reader, writers, PERIODIC)
-		}
-	}
-}
-
 func main() {
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 
@@ -67,19 +55,31 @@ func main() {
 	reader := energy.NewGeoEnergyDataReader(geoUsername, geoPassword)
 
 	// Configure writers
-	datadogApiKey := os.Getenv("DD_API_KEY")
-	datadogSite := getEnvOrDefault("DD_SITE", "datadoghq.com")
-	datadogHostname := getEnvOrDefault("DD_HOSTNAME", "localhost")
-
 	writers := []energy.EnergyDataWriter{
 		energy.NewLoggerWriter(logger),
-		energy.NewDatadogWriter(datadogApiKey, datadogSite, datadogHostname, logger),
+	}
+
+	if true {
+		datadogApiKey := os.Getenv("DD_API_KEY")
+		datadogSite := getEnvOrDefault("DD_SITE", "datadoghq.com")
+		datadogHostname := getEnvOrDefault("DD_HOSTNAME", "localhost")
+		writers = append(writers, energy.NewDatadogWriter(datadogApiKey, datadogSite, datadogHostname, logger))
 	}
 
 	tickLive := time.NewTicker(time.Second * time.Duration(10))
 	tickPeriodic := time.NewTicker(time.Second * time.Duration(300))
 
-	go scheduler(logger, reader, writers, tickLive, tickPeriodic)
+	getMeterData(logger, reader, writers, LIVE|PERIODIC)
+	go func() {
+		for {
+			select {
+			case <-tickLive.C:
+				getMeterData(logger, reader, writers, LIVE)
+			case <-tickPeriodic.C:
+				getMeterData(logger, reader, writers, PERIODIC)
+			}
+		}
+	}()
 
 	// Wait for a SIGINT or SIGTERM
 	sigs := make(chan os.Signal, 1)
