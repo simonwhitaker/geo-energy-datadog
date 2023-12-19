@@ -4,8 +4,8 @@ services:
     build:
       context: .
     environment:
-      - DD_SITE=datadoghq.eu
-      - DD_HOSTNAME=localhost
+      - DD_SITE
+      - DD_HOSTNAME
       - GEO_USERNAME
       - GEO_PASSWORD
       - DD_API_KEY
