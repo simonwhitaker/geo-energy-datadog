@@ -10,7 +10,7 @@ import (
 
 func TestGetMetricSeries(t *testing.T) {
 	reading := Reading{Commodity: ELECTRICITY, ReadingType: LIVE, Value: 2.0}
-	w := NewDatadogWriter("", "", "some-hostname", nil)
+	w := NewDatadogWriter("some-hostname", nil)
 
 	actual := w.getMetricSeries(reading)
 	expected := datadogV2.MetricSeries{

@@ -11,6 +11,7 @@ A Go application that periodically queryies the [Geotogether](https://geotogethe
 export GEO_USERNAME="me@example.com"
 export GEO_PASSWORD="<geotogether.com password here>"
 export DD_API_KEY="<Datadog API key here>"
+export DD_APP_KEY="<Datadog app key here>" # optional
 export DD_SITE="datadoghq.eu" # optional, defaults to datadoghq.com
 
 go run .

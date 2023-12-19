@@ -1,7 +1,6 @@
 package energy
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,38 +11,21 @@ import (
 )
 
 type DatadogWriter struct {
-	apiKey   string
-	site     string
 	hostname string
 	logger   *log.Logger
 }
 
-func NewDatadogWriter(apiKey, site, hostname string, logger *log.Logger) DatadogWriter {
+func NewDatadogWriter(hostname string, logger *log.Logger) DatadogWriter {
 	return DatadogWriter{
-		apiKey:   apiKey,
-		site:     site,
 		hostname: hostname,
 		logger:   logger,
 	}
 }
 
 func (w DatadogWriter) WriteReadings(readings []Reading) error {
-	ctx := context.WithValue(
-		context.Background(),
-		datadog.ContextAPIKeys,
-		map[string]datadog.APIKey{
-			"apiKeyAuth": {
-				Key: w.apiKey,
-			},
-		},
-	)
-	ctx = context.WithValue(
-		ctx,
-		datadog.ContextServerVariables,
-		map[string]string{
-			"site": w.site,
-		},
-	)
+	// datadog.NewDefaultContext reads DD_API_KEY, DD_APP_KEY and DD_SITE if
+	// populated.
+	ctx := datadog.NewDefaultContext(nil)
 	configuration := datadog.NewConfiguration()
 	datadogApiClient := datadog.NewAPIClient(configuration)
 	datadogMetricsApi := datadogV2.NewMetricsApi(datadogApiClient)

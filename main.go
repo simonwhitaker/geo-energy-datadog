@@ -59,10 +59,9 @@ func main() {
 		energy.NewLoggerWriter(logger),
 	}
 
-	if datadogApiKey, ok := os.LookupEnv("DD_API_KEY"); ok {
-		datadogSite := getEnvOrDefault("DD_SITE", "datadoghq.com")
+	if _, ok := os.LookupEnv("DD_API_KEY"); ok {
 		datadogHostname := getEnvOrDefault("DD_HOSTNAME", "localhost")
-		writers = append(writers, energy.NewDatadogWriter(datadogApiKey, datadogSite, datadogHostname, logger))
+		writers = append(writers, energy.NewDatadogWriter(datadogHostname, logger))
 	} else {
 		logger.Println("Skipping Datadog; DD_API_KEY not set")
 	}
