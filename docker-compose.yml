@@ -9,6 +9,8 @@ services:
       - GEO_USERNAME
       - GEO_PASSWORD
       - DD_API_KEY
+    env_file:
+      - .env
     restart: unless-stopped
     deploy:
       resources:
