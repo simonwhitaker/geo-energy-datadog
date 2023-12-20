@@ -2,38 +2,18 @@ package energy
 
 import "fmt"
 
-type ReadingType int
-type CommodityType int
+type ReadingType string
+type CommodityType string
 
 const (
-	GAS CommodityType = iota
-	ELECTRICITY
+	GAS         CommodityType = "gas"
+	ELECTRICITY               = "electricity"
 )
-
-func (c CommodityType) String() string {
-	switch c {
-	case GAS:
-		return "gas"
-	case ELECTRICITY:
-		return "electricity"
-	}
-	return "unknown"
-}
 
 const (
-	LIVE ReadingType = iota
-	METER
+	LIVE  ReadingType = "live"
+	METER             = "meter"
 )
-
-func (r ReadingType) String() string {
-	switch r {
-	case LIVE:
-		return "live"
-	case METER:
-		return "meter"
-	}
-	return "unknown"
-}
 
 type Reading struct {
 	Commodity   CommodityType
