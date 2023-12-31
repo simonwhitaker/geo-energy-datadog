@@ -1,6 +1,6 @@
 # geo-energy-datadog
 
-A Go application that periodically queryies the [Geotogether](https://geotogether.com/) smart meter API and writes data to Datadog. It's written in such a way that it ought to be possible to plug in other inputs and outputs fairly easily.
+A Go application that periodically queries the [Geotogether](https://geotogether.com/) smart meter API and writes data to Datadog. It's written in such a way that it ought to be possible to plug in other inputs and outputs fairly easily.
 
 ![](./assets/screenshot.png)
 
