@@ -19,29 +19,8 @@ go run .
 
 ## Using Docker
 
-Create a `.env` file and populate it with the env variables above. Then:
+Export the environment variables as above, then:
 
 ```sh
-docker compose up
-```
-
-## Storing secrets in 1Password
-
-Set up an .env file similar to `.local.env` and `.prod.env` in this repo, then you can use `op run` or `op inject` to use those secrets at runtime. For example:
-
-```sh
-op run --env-file="./.mysecrets.env" -- go run .
-```
-
-Or to use the supplied Docker Compose file, you can either use `op run`:
-
-```sh
-op run --env-file="./.mysecrets.env" -- docker compose up
-```
-
-Or use `op inject` to populate a local `.env` file with your secrets:
-
-```sh
-op inject -i ./.mysecrets.env -o ./.env
 docker compose up
 ```
