@@ -1,38 +1,98 @@
 package energy
 
 import (
+	"sync"
+	"time"
+	
 	"github.com/olivercullimore/geo-energy-data-client"
 )
 
 type GeoEnergyDataReader struct {
 	username string
 	password string
+	
+	// Cache for system ID
+	systemMu sync.RWMutex
 	systemID string
+	
+	// Cache for access token
+	tokenMu          sync.RWMutex
+	cachedToken      string
+	tokenExpiry      time.Time
 }
 
 func NewGeoEnergyDataReader(username, password string) *GeoEnergyDataReader {
 	return &GeoEnergyDataReader{
 		username: username,
 		password: password,
-		systemID: "",
 	}
 }
 
+
 func (r *GeoEnergyDataReader) getAccessToken() (string, error) {
-	return geo.GetAccessToken(r.username, r.password)
+	r.tokenMu.RLock()
+	if r.cachedToken != "" && time.Now().Before(r.tokenExpiry) {
+		token := r.cachedToken
+		r.tokenMu.RUnlock()
+		return token, nil
+	}
+	r.tokenMu.RUnlock()
+	
+	// Need to get a new token
+	r.tokenMu.Lock()
+	defer r.tokenMu.Unlock()
+	
+	// Double-check in case another goroutine got the token
+	if r.cachedToken != "" && time.Now().Before(r.tokenExpiry) {
+		return r.cachedToken, nil
+	}
+	
+	token, err := geo.GetAccessToken(r.username, r.password)
+	if err != nil {
+		return "", err
+	}
+	
+	// Parse JWT to get actual expiration
+	expiry, err := parseJWTExpiry(token)
+	if err != nil {
+		// Fall back to 55 minutes if we can't parse the JWT
+		expiry = time.Now().Add(55 * time.Minute)
+	} else {
+		// Use a 5-minute buffer before the actual expiration
+		expiry = expiry.Add(-5 * time.Minute)
+	}
+	
+	r.cachedToken = token
+	r.tokenExpiry = expiry
+	
+	return token, nil
 }
 
 func (r *GeoEnergyDataReader) getSystemID(accessToken string) (string, error) {
-	if r.systemID == "" {
-		// Get device data to get the system ID
-		deviceData, err := geo.GetDeviceData(accessToken)
-		if err != nil {
-			return "", err
-		}
-
-		geoSystemID := deviceData.SystemDetails[0].SystemID
-		r.systemID = geoSystemID
+	r.systemMu.RLock()
+	if r.systemID != "" {
+		id := r.systemID
+		r.systemMu.RUnlock()
+		return id, nil
 	}
+	r.systemMu.RUnlock()
+	
+	// Need to fetch system ID
+	r.systemMu.Lock()
+	defer r.systemMu.Unlock()
+	
+	// Double-check in case another goroutine got it
+	if r.systemID != "" {
+		return r.systemID, nil
+	}
+	
+	// Get device data to get the system ID
+	deviceData, err := geo.GetDeviceData(accessToken)
+	if err != nil {
+		return "", err
+	}
+
+	r.systemID = deviceData.SystemDetails[0].SystemID
 	return r.systemID, nil
 }
 
