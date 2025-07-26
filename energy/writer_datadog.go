@@ -11,24 +11,29 @@ import (
 )
 
 type DatadogWriter struct {
-	hostname string
-	logger   *log.Logger
+	hostname   string
+	logger     *log.Logger
+	apiClient  *datadog.APIClient
+	metricsApi *datadogV2.MetricsApi
 }
 
 func NewDatadogWriter(hostname string, logger *log.Logger) DatadogWriter {
+	// datadog.NewDefaultContext reads DD_API_KEY, DD_APP_KEY and DD_SITE if
+	// populated.
+	configuration := datadog.NewConfiguration()
+	apiClient := datadog.NewAPIClient(configuration)
+	metricsApi := datadogV2.NewMetricsApi(apiClient)
+	
 	return DatadogWriter{
-		hostname: hostname,
-		logger:   logger,
+		hostname:   hostname,
+		logger:     logger,
+		apiClient:  apiClient,
+		metricsApi: metricsApi,
 	}
 }
 
 func (w DatadogWriter) WriteReadings(readings []Reading) error {
-	// datadog.NewDefaultContext reads DD_API_KEY, DD_APP_KEY and DD_SITE if
-	// populated.
 	ctx := datadog.NewDefaultContext(nil)
-	configuration := datadog.NewConfiguration()
-	datadogApiClient := datadog.NewAPIClient(configuration)
-	datadogMetricsApi := datadogV2.NewMetricsApi(datadogApiClient)
 
 	allSeries := []datadogV2.MetricSeries{}
 	for _, el := range readings {
@@ -42,7 +47,7 @@ func (w DatadogWriter) WriteReadings(readings []Reading) error {
 
 	body := datadogV2.MetricPayload{Series: allSeries}
 
-	_, _, err := datadogMetricsApi.SubmitMetrics(ctx, body, *datadogV2.NewSubmitMetricsOptionalParameters())
+	_, _, err := w.metricsApi.SubmitMetrics(ctx, body, *datadogV2.NewSubmitMetricsOptionalParameters())
 
 	return err
 }
