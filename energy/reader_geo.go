@@ -1,6 +1,7 @@
 package energy
 
 import (
+	"fmt"
 	"sync"
 	"time"
 	
@@ -47,7 +48,9 @@ func (r *GeoEnergyDataReader) getAccessToken() (string, error) {
 		return r.cachedToken, nil
 	}
 	
-	token, err := geo.GetAccessToken(r.username, r.password)
+	token, err := callAPI("GetAccessToken", func() (string, error) {
+		return geo.GetAccessToken(r.username, r.password)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -87,13 +90,36 @@ func (r *GeoEnergyDataReader) getSystemID(accessToken string) (string, error) {
 	}
 	
 	// Get device data to get the system ID
-	deviceData, err := geo.GetDeviceData(accessToken)
+	deviceData, err := callAPI("GetDeviceData", func() (geo.DeviceData, error) {
+		return geo.GetDeviceData(accessToken)
+	})
 	if err != nil {
 		return "", err
 	}
 
-	r.systemID = deviceData.SystemDetails[0].SystemID
+	// A degraded API can answer with an empty or partial payload, so don't
+	// assume there's a system to read.
+	if len(deviceData.SystemDetails) == 0 {
+		return "", fmt.Errorf("no system details returned for account")
+	}
+
+	systemID := deviceData.SystemDetails[0].SystemID
+	if systemID == "" {
+		return "", fmt.Errorf("empty system ID returned for account")
+	}
+
+	r.systemID = systemID
 	return r.systemID, nil
+}
+
+// invalidateToken drops the cached access token so the next call logs in
+// again. Used when the API rejects the token we're holding.
+func (r *GeoEnergyDataReader) invalidateToken() {
+	r.tokenMu.Lock()
+	defer r.tokenMu.Unlock()
+
+	r.cachedToken = ""
+	r.tokenExpiry = time.Time{}
 }
 
 func (r *GeoEnergyDataReader) GetLiveReadings() ([]Reading, error) {
@@ -109,8 +135,13 @@ func (r *GeoEnergyDataReader) GetLiveReadings() ([]Reading, error) {
 		return result, err
 	}
 
-	liveData, err := geo.GetLiveMeterData(accessToken, systemId)
+	liveData, err := callAPI("GetLiveMeterData", func() (geo.LiveMeterData, error) {
+		return geo.GetLiveMeterData(accessToken, systemId)
+	})
 	if err != nil {
+		if isAuthError(err) {
+			r.invalidateToken()
+		}
 		return result, err
 	}
 
@@ -149,8 +180,13 @@ func (r *GeoEnergyDataReader) GetMeterReadings() ([]Reading, error) {
 		return result, err
 	}
 
-	periodicData, err := geo.GetPeriodicMeterData(accessToken, systemId)
+	periodicData, err := callAPI("GetPeriodicMeterData", func() (geo.PeriodicMeterData, error) {
+		return geo.GetPeriodicMeterData(accessToken, systemId)
+	})
 	if err != nil {
+		if isAuthError(err) {
+			r.invalidateToken()
+		}
 		return result, err
 	}
 
