@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +21,19 @@ const (
 	LIVE ReadingMode = 1 << iota
 	PERIODIC
 )
+
+func (m ReadingMode) String() string {
+	switch m {
+	case LIVE:
+		return "live"
+	case PERIODIC:
+		return "periodic"
+	case LIVE | PERIODIC:
+		return "live and periodic"
+	default:
+		return "unknown"
+	}
+}
 
 const (
 	healthServerAddr         = ":8080"
@@ -93,14 +108,16 @@ func startHealthServer(logger *log.Logger, health *healthState) *http.Server {
 	return server
 }
 
-func getMeterData(reader energy.EnergyDataReader, writers []energy.EnergyDataWriter, mode ReadingMode) error {
+// getMeterData reads the requested data and hands it to every writer. It
+// returns the number of readings the upstream API had available.
+func getMeterData(reader energy.EnergyDataReader, writers []energy.EnergyDataWriter, mode ReadingMode) (int, error) {
 	allReadings := []energy.Reading{}
 
 	if mode&PERIODIC != 0 {
 		// Get periodic meter data
 		readings, err := reader.GetMeterReadings()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		allReadings = append(allReadings, readings...)
 	}
@@ -108,35 +125,110 @@ func getMeterData(reader energy.EnergyDataReader, writers []energy.EnergyDataWri
 		// Get live meter data
 		readings, err := reader.GetLiveReadings()
 		if err != nil {
-			return err
+			return 0, err
 		}
 
 		allReadings = append(allReadings, readings...)
 	}
 
+	// Write to every writer even if one of them fails; a broken exporter
+	// shouldn't cost us the readings the others could have taken.
+	var writeErrs []error
 	for _, w := range writers {
-		err := w.WriteReadings(allReadings)
-		if err != nil {
-			return err
+		if err := w.WriteReadings(allReadings); err != nil {
+			writeErrs = append(writeErrs, err)
 		}
 	}
+
+	return len(allReadings), errors.Join(writeErrs...)
+}
+
+// poller reads from the meter on demand and keeps the health state in step
+// with whether data is actually flowing.
+type poller struct {
+	logger     *log.Logger
+	health     *healthState
+	reader     energy.EnergyDataReader
+	writers    []energy.EnergyDataWriter
+	silentFrom map[ReadingMode]time.Time
+}
+
+func newPoller(logger *log.Logger, health *healthState, reader energy.EnergyDataReader, writers []energy.EnergyDataWriter) *poller {
+	return &poller{
+		logger:     logger,
+		health:     health,
+		reader:     reader,
+		writers:    writers,
+		silentFrom: map[ReadingMode]time.Time{},
+	}
+}
+
+// poll fetches and writes one round of readings. A panic below this point (the
+// upstream client dereferences a nil response when the transport fails) is
+// turned into an error rather than being allowed to kill the process.
+func (p *poller) poll(mode ReadingMode) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic while reading %v data: %v", mode, r)
+		}
+	}()
+
+	count, err := getMeterData(p.reader, p.writers, mode)
+	if err != nil {
+		return err
+	}
+
+	if count == 0 {
+		// The API answers 200 with nothing in it while it's degraded. Don't
+		// report that as a success: let readiness go stale instead of
+		// claiming health while no data is flowing.
+		p.noteSilence(mode)
+		return nil
+	}
+
+	p.noteReadings(mode)
+	p.health.markSuccess(mode)
 	return nil
 }
 
-// waitForConnection retries getMeterData with exponential backoff until it succeeds
-func waitForConnection(logger *log.Logger, reader energy.EnergyDataReader, writers []energy.EnergyDataWriter) {
+// noteSilence logs the start of a run of empty responses, once per run.
+func (p *poller) noteSilence(mode ReadingMode) {
+	if _, alreadySilent := p.silentFrom[mode]; alreadySilent {
+		return
+	}
+
+	p.silentFrom[mode] = time.Now()
+	p.logger.Printf("No %v readings available from upstream", mode)
+}
+
+func (p *poller) noteReadings(mode ReadingMode) {
+	if since, wasSilent := p.silentFrom[mode]; wasSilent {
+		p.logger.Printf("%v readings resumed after %v", mode, time.Since(since).Truncate(time.Second))
+		delete(p.silentFrom, mode)
+	}
+}
+
+// waitForConnection retries the first read with exponential backoff until it
+// succeeds, or until ctx is cancelled. It reports whether it connected.
+func waitForConnection(ctx context.Context, logger *log.Logger, p *poller) bool {
 	backoff := time.Second * 5
 	maxBackoff := time.Minute * 2
 
 	for {
-		err := getMeterData(reader, writers, LIVE|PERIODIC)
+		err := p.poll(LIVE | PERIODIC)
 		if err == nil {
 			logger.Println("Connected successfully")
-			return
+			return true
 		}
 
 		logger.Printf("Connection failed: %v (retrying in %v)", err, backoff)
-		time.Sleep(backoff)
+
+		// Stay responsive to shutdown while we're waiting to retry.
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(backoff):
+		}
 
 		// Exponential backoff with cap
 		backoff *= 2
@@ -173,36 +265,39 @@ func main() {
 
 	healthServer := startHealthServer(logger, health)
 
+	// Shut down cleanly on SIGINT or SIGTERM, including while we're still
+	// retrying the initial connection.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	p := newPoller(logger, health, reader, writers)
+
 	// Wait for initial connection with retry
-	waitForConnection(logger, reader, writers)
-	health.markSuccess(LIVE | PERIODIC)
+	if waitForConnection(ctx, logger, p) {
+		tickLive := time.NewTicker(time.Second * time.Duration(10))
+		tickPeriodic := time.NewTicker(time.Second * time.Duration(300))
+		defer tickLive.Stop()
+		defer tickPeriodic.Stop()
 
-	tickLive := time.NewTicker(time.Second * time.Duration(10))
-	tickPeriodic := time.NewTicker(time.Second * time.Duration(300))
-
-	go func() {
-		for {
-			select {
-			case <-tickLive.C:
-				if err := getMeterData(reader, writers, LIVE); err != nil {
-					logger.Printf("Error getting live data: %v", err)
-				} else {
-					health.markSuccess(LIVE)
-				}
-			case <-tickPeriodic.C:
-				if err := getMeterData(reader, writers, PERIODIC); err != nil {
-					logger.Printf("Error getting periodic data: %v", err)
-				} else {
-					health.markSuccess(PERIODIC)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-tickLive.C:
+					if err := p.poll(LIVE); err != nil {
+						logger.Printf("Error getting live data: %v", err)
+					}
+				case <-tickPeriodic.C:
+					if err := p.poll(PERIODIC); err != nil {
+						logger.Printf("Error getting periodic data: %v", err)
+					}
 				}
 			}
-		}
-	}()
+		}()
 
-	// Wait for a SIGINT or SIGTERM
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	<-sigs
+		<-ctx.Done()
+	}
 
 	logger.Println("Shutting down...")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
